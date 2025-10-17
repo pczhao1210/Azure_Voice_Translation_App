@@ -1,0 +1,236 @@
+:root {
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: #1f2933;
+  background: #f5f7fa;
+}
+
+body {
+  margin: 0;
+}
+
+.app-container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+header {
+  margin-bottom: 24px;
+}
+
+header h1 {
+  margin: 0 0 8px;
+  font-size: 28px;
+}
+
+header p {
+  margin: 0;
+  color: #52606d;
+}
+
+main {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px;
+}
+
+.panel {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.04);
+}
+
+.panel h2 {
+  margin-top: 0;
+  font-size: 20px;
+}
+
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-field.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+label {
+  font-weight: 600;
+}
+
+input,
+select,
+button {
+  border-radius: 8px;
+  border: 1px solid #d2d6dc;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+select[multiple] {
+  min-height: 120px;
+}
+
+.voice-select {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.voice-option {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f3f4f6;
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-size: 13px;
+}
+
+input:disabled,
+select:disabled,
+button:disabled {
+  background: #e4e7eb;
+  cursor: not-allowed;
+}
+
+small {
+  font-size: 12px;
+  color: #829ab1;
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+button {
+  background: #2563eb;
+  border: none;
+  color: #ffffff;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+button:hover {
+  background: #1d4ed8;
+}
+
+button.danger {
+  background: #dc2626;
+}
+
+button.danger:hover {
+  background: #b91c1c;
+}
+
+.status {
+  font-size: 14px;
+  color: #52606d;
+}
+
+.status-running {
+  color: #059669;
+}
+
+.status-error {
+  color: #dc2626;
+}
+
+.transcripts .history {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+.transcripts article {
+  background: #f1f5f9;
+  border-radius: 10px;
+  padding: 12px;
+  line-height: 1.5;
+}
+
+.transcripts .source {
+  margin: 0 0 8px;
+  font-weight: 600;
+  color: #1f2937;
+  position: relative;
+}
+
+.transcripts .source:before {
+  content: "原文: ";
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 400;
+}
+
+.transcripts .target {
+  margin: 0;
+  color: #4c51bf;
+  background: #f3f4f6;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border-left: 3px solid #4c51bf;
+  position: relative;
+}
+
+.transcripts .target:before {
+  content: "译文: ";
+  font-size: 12px;
+  color: #4c51bf;
+  font-weight: 500;
+}
+
+.partial {
+  border: 1px dashed #93c5fd;
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+  background: #ebf5ff;
+}
+
+.partial h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: #3b82f6;
+  font-weight: 600;
+}
+
+.partial .source {
+  margin: 0 0 8px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.partial .target {
+  margin: 0;
+  color: #4c51bf;
+  background: #ddd6fe;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-style: italic;
+}
+
+.error {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}

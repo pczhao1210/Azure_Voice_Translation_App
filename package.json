@@ -1,0 +1,23 @@
+{
+  "name": "voice-translate-app",
+  "private": true,
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:*",
+    "dev:client": "npm --workspace client run dev",
+    "dev:server": "npm --workspace server run dev",
+    "build": "npm-run-all build:*",
+    "build:client": "npm --workspace client run build",
+    "build:server": "npm --workspace server run build",
+    "lint": "npm-run-all lint:*",
+    "lint:client": "npm --workspace client run lint",
+    "lint:server": "npm --workspace server run lint",
+    "start": "npm --workspace server run start"
+  },
+  "devDependencies": {
+    "npm-run-all": "^4.1.5"
+  }
+}
