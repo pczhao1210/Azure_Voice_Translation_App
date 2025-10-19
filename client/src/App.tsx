@@ -10,7 +10,9 @@ import {
   AppOptions,
   LanguageOption,
   SessionConfig,
-  SessionPhase
+  SessionPhase,
+  SegmentationStrategy,
+  SynthesisMode
 } from './types';
 
 const STORAGE_KEY = 'voice-translate-config';
@@ -173,7 +175,9 @@ function buildInitialConfig(
     enableTranslation: stored?.enableTranslation ?? true,
     enableSpeechSynthesis: stored?.enableSpeechSynthesis ?? true,
     useAutoDetect,
-    autoDetectLanguages: useAutoDetect ? autoDetectCandidates : []
+    autoDetectLanguages: useAutoDetect ? autoDetectCandidates : [],
+    segmentationStrategy: stored?.segmentationStrategy ?? options.defaultSegmentationStrategy,
+    synthesisMode: stored?.synthesisMode ?? options.defaultSynthesisMode
   };
 }
 
@@ -523,7 +527,49 @@ export default function App() {
               </label>
             </div>
 
-            <div className="form-actions">
+            <div className="form-field">
+              <label htmlFor="segmentationStrategy">语音分段策略</label>
+              <select
+                id="segmentationStrategy"
+                value={config.segmentationStrategy}
+                onChange={(event) =>
+                  handleFieldChange('segmentationStrategy', event.target.value as SegmentationStrategy)
+                }
+                disabled={disableControls}
+              >
+                <option value="Semantic">语义分段 - 基于标点符号和语义（推荐）</option>
+                <option value="Silence">静音分段 - 基于静音间隔（传统方式）</option>
+              </select>
+              <small>
+                {config.segmentationStrategy === 'Semantic' 
+                  ? '使用AI检测句子结束进行分段，提供更自然的语义单元，适合连续对话'
+                  : '基于静音间隔检测进行分段，传统方式，适合固定节奏的语音输入'
+                }
+              </small>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="synthesisMode">语音合成模式</label>
+              <select
+                id="synthesisMode"
+                value={config.synthesisMode}
+                onChange={(event) =>
+                  handleFieldChange('synthesisMode', event.target.value as SynthesisMode)
+                }
+                disabled={disableControls || !config.enableSpeechSynthesis}
+              >
+                <option value="Quick">快速响应 - 检测标点符号立即合成（推荐）</option>
+                <option value="Standard">标准响应 - 等待完整识别结果</option>
+              </select>
+              <small>
+                {config.synthesisMode === 'Quick' 
+                  ? '检测到标点符号后立即合成增量文本，提供更快的语音反馈体验'
+                  : '等待完整识别结果后一次性合成，确保语音的完整性和准确性'
+                }
+              </small>
+            </div>
+
+            <div className="form-actions">`
               <button
                 type="submit"
                 disabled={disableControls}
@@ -557,7 +603,12 @@ export default function App() {
           <div className="history">
             {transcripts.map((item) => (
               <article key={item.id}>
-                <p className="source">{item.sourceText}</p>
+                <p className="source">
+                  {item.sourceText}
+                  {item.detectedLanguage && config.useAutoDetect && (
+                    <span className="detected-language"> [{item.detectedLanguage}]</span>
+                  )}
+                </p>
                 {config.enableTranslation ? (
                   <p className="target">
                     {item.translationText || '翻译中...'}
@@ -567,6 +618,8 @@ export default function App() {
             ))}
           </div>
         </section>
+
+
       </main>
     </div>
   );

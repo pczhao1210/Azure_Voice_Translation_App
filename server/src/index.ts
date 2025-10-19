@@ -17,6 +17,9 @@ interface LanguageOption {
   label: string;
 }
 
+type SegmentationStrategy = 'Semantic' | 'Silence';
+type SynthesisMode = 'Quick' | 'Standard';
+
 interface ServerOptions {
   fromLanguages: LanguageOption[];
   targetLanguages: LanguageOption[];
@@ -26,15 +29,23 @@ interface ServerOptions {
   defaultVoice: string | null;
   defaultApiKey: string | null;
   defaultRegion: string | null;
+  defaultSegmentationStrategy: SegmentationStrategy;
+  defaultSynthesisMode: SynthesisMode;
 }
 
+// 合成模式枚举
 interface SynthesisConfig {
-  minTextLength: number;
-  lengthGrowthThreshold: number;
-  minLengthForGrowth: number;
-  timeIntervalMs: number;
-  minLengthForTime: number;
-  semanticGrowthThreshold: number;
+  mode: SynthesisMode;
+  // 快速响应模式配置
+  quickResponse: {
+    punctuation: string[];
+    minLength: number;
+    intervalMs: number;
+  };
+  // 标准响应模式配置
+  standardResponse: {
+    minLength: number;
+  };
 }
 
 function parseStringList(input?: string) {
@@ -61,15 +72,24 @@ const targetLanguageDefaults = parseStringList(
   process.env.DEFAULT_TARGET_LANGUAGES
 );
 
-// 解析智能合成配置
+// 解析新的合成配置
 function parseSynthesisConfig(): SynthesisConfig {
+  const mode = (process.env.DEFAULT_SYNTHESIS_MODE || 'Quick') as SynthesisMode;
+  
+  // 解析快速响应标点符号
+  const punctuationString = process.env.QUICK_RESPONSE_PUNCTUATION || '，。！？；：、,.!?;:․';
+  const punctuation = punctuationString.split('').filter(char => char.trim());
+  
   return {
-    minTextLength: parseInt(process.env.SYNTHESIS_MIN_TEXT_LENGTH || '3'),
-    lengthGrowthThreshold: parseFloat(process.env.SYNTHESIS_LENGTH_GROWTH_THRESHOLD || '1.8'),
-    minLengthForGrowth: parseInt(process.env.SYNTHESIS_MIN_LENGTH_FOR_GROWTH || '8'),
-    timeIntervalMs: parseInt(process.env.SYNTHESIS_TIME_INTERVAL_MS || '2000'),
-    minLengthForTime: parseInt(process.env.SYNTHESIS_MIN_LENGTH_FOR_TIME || '5'),
-    semanticGrowthThreshold: parseInt(process.env.SYNTHESIS_SEMANTIC_GROWTH_THRESHOLD || '8')
+    mode,
+    quickResponse: {
+      punctuation,
+      minLength: parseInt(process.env.QUICK_RESPONSE_MIN_LENGTH || '2'),
+      intervalMs: parseInt(process.env.QUICK_RESPONSE_INTERVAL_MS || '500')
+    },
+    standardResponse: {
+      minLength: parseInt(process.env.STANDARD_RESPONSE_MIN_LENGTH || '5')
+    }
   };
 }
 
@@ -84,10 +104,86 @@ const serverOptions: ServerOptions = {
   ),
   defaultVoice: process.env.DEFAULT_VOICE ?? null,
   defaultApiKey: process.env.AZURE_SPEECH_KEY ?? null,
-  defaultRegion: process.env.AZURE_SPEECH_REGION ?? null
+  defaultRegion: process.env.AZURE_SPEECH_REGION ?? null,
+  defaultSegmentationStrategy: (process.env.DEFAULT_SEGMENTATION_STRATEGY as SegmentationStrategy) ?? 'Semantic',
+  defaultSynthesisMode: (process.env.DEFAULT_SYNTHESIS_MODE as SynthesisMode) ?? 'Quick'
 };
 
 const synthesisConfig = parseSynthesisConfig();
+
+// 解析Speech SDK属性配置
+function parseSpeechSDKProperties(): Record<string, string> {
+  const properties: Record<string, string> = {};
+  const propertiesString = process.env.DEFAULT_SPEECH_SDK_PROPERTIES;
+  
+  if (propertiesString) {
+    const pairs = propertiesString.split(';');
+    for (const pair of pairs) {
+      const [key, value] = pair.split('=');
+      if (key && value) {
+        // 移除PropertyId.前缀，只保留实际的属性名
+        const cleanKey = key.trim().replace('PropertyId.', '');
+        properties[cleanKey] = value.trim();
+      }
+    }
+  }
+  
+  console.log('解析的Speech SDK属性:', properties);
+  return properties;
+}
+
+// 解析分段策略配置
+function parseSegmentationProperties(strategy: SegmentationStrategy): Record<string, string> {
+  const properties: Record<string, string> = {};
+  
+  const propertiesString = strategy === 'Semantic' 
+    ? process.env.SEMANTIC_SEGMENTATION_PROPERTIES
+    : process.env.SILENCE_SEGMENTATION_PROPERTIES;
+  
+  if (propertiesString) {
+    const pairs = propertiesString.split(';');
+    for (const pair of pairs) {
+      const [key, value] = pair.split('=');
+      if (key && value) {
+        properties[key.trim()] = value.trim();
+      }
+    }
+  }
+  
+  console.log(`解析的${strategy}分段策略属性:`, properties);
+  return properties;
+}
+
+// 安全地设置Speech SDK属性，包含错误处理和兼容性检查
+function safelySetProperty(recognizer: sdk.TranslationRecognizer, propertyName: string, propertyValue: string): boolean {
+  try {
+    // 特殊处理语义分段策略
+    if (propertyName === 'Speech_SegmentationStrategy' && propertyValue === 'Semantic') {
+      console.log('尝试设置语义分段策略...');
+      
+      // 检查是否存在语义分段相关的PropertyId
+      if (!(sdk.PropertyId as any).Speech_SegmentationStrategy) {
+        console.warn('当前SDK版本不支持语义分段，将跳过此配置');
+        return false;
+      }
+    }
+    
+    const propertyId = (sdk.PropertyId as any)[propertyName];
+    if (propertyId) {
+      recognizer.properties.setProperty(propertyId, propertyValue);
+      console.log(`✓ 设置属性成功: ${propertyName} = ${propertyValue}`);
+      return true;
+    } else {
+      console.warn(`⚠ 未知的PropertyId: ${propertyName}`);
+      return false;
+    }
+  } catch (error) {
+    console.error(`✗ 设置属性失败: ${propertyName} = ${propertyValue}`, error);
+    return false;
+  }
+}
+
+const speechSDKProperties = parseSpeechSDKProperties();
 
 const app = express();
 app.use(cors());
@@ -96,8 +192,19 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+app.get('/api/server-time', (_req, res) => {
+  res.json({ 
+    timestamp: Date.now(),
+    iso: new Date().toISOString()
+  });
+});
+
 app.get('/api/options', (_req, res) => {
   res.json(serverOptions);
+});
+
+app.get('/api/server-time', (_req, res) => {
+  res.json({ timestamp: Date.now() });
 });
 
 const __filename = fileURLToPath(import.meta.url);
@@ -123,12 +230,16 @@ interface ClientConfig {
   enableSpeechSynthesis: boolean;
   useAutoDetect: boolean;
   autoDetectLanguages: string[];
+  segmentationStrategy: SegmentationStrategy;
 }
 
 interface SynthesisState {
   lastSynthesizedText: string;
   lastSynthesisTime: number;
   isProcessing: boolean;
+  lastPunctuationIndex: number; // 用于快速响应模式跟踪标点符号位置
+  audioQueue: ArrayBuffer[]; // 音频队列
+  isPlaying: boolean; // 是否正在播放音频
 }
 
 interface SessionContext {
@@ -158,7 +269,49 @@ function sendJson(socket: WebSocket, type: string, payload?: unknown) {
   );
 }
 
-async function performSmartSynthesis(
+// 音频队列管理器
+async function playAudioQueue(sessionContext: SessionContext) {
+  const synthesisState = sessionContext.synthesisState;
+  
+  // 如果已经在播放或队列为空，直接返回
+  if (synthesisState.isPlaying || synthesisState.audioQueue.length === 0) {
+    return;
+  }
+  
+  synthesisState.isPlaying = true;
+  
+  try {
+    while (synthesisState.audioQueue.length > 0) {
+      const audioData = synthesisState.audioQueue.shift()!;
+      console.log(`播放队列中的音频: ${audioData.byteLength} 字节`);
+      
+      // 发送音频数据
+      sessionContext.socket.send(audioData);
+      
+      // 等待一小段时间让音频播放，避免过快发送
+      // 根据音频长度计算大致播放时间（简化计算）
+      const estimatedDuration = audioData.byteLength / 32000 * 1000; // 假设32KB/s播放速度
+      await new Promise(resolve => setTimeout(resolve, Math.max(100, estimatedDuration * 0.8)));
+    }
+  } catch (error) {
+    console.error('播放音频队列时出错:', error);
+  } finally {
+    synthesisState.isPlaying = false;
+  }
+}
+
+// 将音频添加到队列
+function enqueueAudio(sessionContext: SessionContext, audioData: ArrayBuffer) {
+  sessionContext.synthesisState.audioQueue.push(audioData);
+  
+  // 立即尝试播放队列（如果当前没有在播放）
+  playAudioQueue(sessionContext).catch(error => {
+    console.error('启动音频队列播放失败:', error);
+  });
+}
+
+// 快速响应合成：基于标点符号的增量合成
+async function performQuickResponseSynthesis(
   sessionContext: SessionContext,
   translations: Record<string, string>
 ) {
@@ -167,21 +320,71 @@ async function performSmartSynthesis(
   }
 
   const targetLanguageKey = Object.keys(translations)[0];
-  const translationText = translations[targetLanguageKey];
+  const fullTranslationText = translations[targetLanguageKey];
   
-  if (!translationText || translationText.trim() === '') {
+  if (!fullTranslationText || fullTranslationText.trim() === '') {
     return;
   }
 
+  // 防止处理中重复触发
+  if (sessionContext.synthesisState.isProcessing) {
+    return;
+  }
+
+  const config = synthesisConfig.quickResponse;
+  const synthesisState = sessionContext.synthesisState;
+  
+  // 检查文本长度是否满足最小要求
+  if (fullTranslationText.length < config.minLength) {
+    return;
+  }
+  
+  // 检查是否是新的独立句子
+  // 如果当前文本比上次合成时的位置短很多，说明是新句子
+  const isNewSentence = synthesisState.lastPunctuationIndex >= fullTranslationText.length;
+  
+  // 如果是新句子，重置标点符号索引
+  if (isNewSentence) {
+    synthesisState.lastPunctuationIndex = -1;
+  }
+  
+  // 检查时间间隔
+  const now = Date.now();
+  if (now - synthesisState.lastSynthesisTime < config.intervalMs) {
+    return;
+  }
+  
+  // 查找最后一个标点符号位置（而不是第一个新的标点符号）
+  let lastPunctuationIndex = -1;
+  for (let i = fullTranslationText.length - 1; i >= 0; i--) {
+    if (config.punctuation.includes(fullTranslationText[i])) {
+      lastPunctuationIndex = i;
+      break;
+    }
+  }
+  
+  // 如果没有找到标点符号，或者已经合成过这个位置，不合成
+  if (lastPunctuationIndex === -1 || lastPunctuationIndex <= synthesisState.lastPunctuationIndex) {
+    return;
+  }
+  
+  // 计算需要合成的文本：从上次合成位置到最后一个标点符号
+  const startIndex = synthesisState.lastPunctuationIndex + 1;
+  const textToSynthesize = fullTranslationText.slice(startIndex, lastPunctuationIndex + 1).trim();
+  
+  if (!textToSynthesize || textToSynthesize.length === 0) {
+    return;
+  }
+  
+  console.log(`快速响应合成: "${textToSynthesize}" (检测到标点: "${fullTranslationText[lastPunctuationIndex]}")`);
+  
   // 标记开始处理
   sessionContext.synthesisState.isProcessing = true;
-  
-  console.log(`智能合成: "${translationText}" (语言: ${targetLanguageKey})`);
   
   try {
     const result = await new Promise<sdk.SpeechSynthesisResult>((resolve, reject) => {
       sessionContext.speechSynthesizer!.speakTextAsync(
-        translationText,
+        textToSynthesize,
         (result) => resolve(result),
         (error) => reject(error)
       );
@@ -190,90 +393,102 @@ async function performSmartSynthesis(
     if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
       const audioData = result.audioData;
       if (audioData && audioData.byteLength > 0) {
-        console.log(`智能合成完成，发送音频: ${audioData.byteLength} 字节`);
-        sessionContext.socket.send(audioData);
+        console.log(`快速响应合成完成，加入队列: ${audioData.byteLength} 字节`);
         
-        // 更新状态
-        sessionContext.synthesisState.lastSynthesizedText = translationText;
-        sessionContext.synthesisState.lastSynthesisTime = Date.now();
+        // 将音频加入队列而不是直接发送
+        enqueueAudio(sessionContext, audioData);
+        
+        // 更新状态：记录已经合成到最后一个标点符号的位置
+        sessionContext.synthesisState.lastPunctuationIndex = lastPunctuationIndex;
+        sessionContext.synthesisState.lastSynthesisTime = now;
+        sessionContext.synthesisState.lastSynthesizedText = fullTranslationText.slice(0, lastPunctuationIndex + 1);
       }
     }
   } catch (error) {
-    console.error('智能合成失败:', error);
+    console.error('快速响应合成失败:', error);
   } finally {
-    // 处理完成，重置标志
     sessionContext.synthesisState.isProcessing = false;
   }
 }
 
-function shouldTriggerSynthesis(
-  currentText: string,
-  translations: Record<string, string>,
-  synthesisState: SynthesisState
-): boolean {
-  // 获取翻译文本用于判断
-  const translationText = Object.values(translations)[0] || '';
-  const lastText = synthesisState.lastSynthesizedText;
-  const lastTime = synthesisState.lastSynthesisTime;
-  const now = Date.now();
+// 标准响应合成：等待完整识别结果
+async function performStandardResponseSynthesis(
+  sessionContext: SessionContext,
+  translations: Record<string, string>
+) {
+  if (!sessionContext.speechSynthesizer || Object.keys(translations).length === 0) {
+    return;
+  }
+
+  const targetLanguageKey = Object.keys(translations)[0];
+  const fullTranslationText = translations[targetLanguageKey];
   
-  // 如果正在处理中，避免重复触发
-  if (synthesisState.isProcessing) {
-    return false;
+  if (!fullTranslationText || fullTranslationText.trim() === '') {
+    return;
+  }
+
+  // 防止处理中重复触发
+  if (sessionContext.synthesisState.isProcessing) {
+    return;
+  }
+
+  const config = synthesisConfig.standardResponse;
+  
+  // 检查文本长度是否满足最小要求
+  if (fullTranslationText.length < config.minLength) {
+    return;
   }
   
-  // 如果文本过短，不触发
-  if (translationText.length < synthesisConfig.minTextLength) {
-    return false;
-  }
+  console.log(`标准响应合成: "${fullTranslationText}"`);
   
-  console.log('智能触发判断:', {
-    currentLength: translationText.length,
-    lastLength: lastText.length,
-    timeSinceLastSynthesis: now - lastTime,
-    translationText: translationText.substring(0, 50) + '...',
-    config: synthesisConfig
-  });
+  // 标记开始处理
+  sessionContext.synthesisState.isProcessing = true;
   
-  // 1. 检测句子结束标点
-  if (/[.!?。！？]$/.test(translationText.trim())) {
-    console.log('触发条件：句子结束标点');
-    return true;
-  }
-  
-  // 2. 文本长度显著增加且不是太短
-  if (translationText.length > lastText.length * synthesisConfig.lengthGrowthThreshold && 
-      translationText.length > synthesisConfig.minLengthForGrowth) {
-    console.log('触发条件：文本长度显著增加', {
-      growth: (translationText.length / lastText.length).toFixed(2),
-      threshold: synthesisConfig.lengthGrowthThreshold
+  try {
+    const result = await new Promise<sdk.SpeechSynthesisResult>((resolve, reject) => {
+      sessionContext.speechSynthesizer!.speakTextAsync(
+        fullTranslationText,
+        (result) => resolve(result),
+        (error) => reject(error)
+      );
     });
-    return true;
+    
+    if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
+      const audioData = result.audioData;
+      if (audioData && audioData.byteLength > 0) {
+        console.log(`标准响应合成完成，加入队列: ${audioData.byteLength} 字节`);
+        
+        // 标准模式：清空队列后直接播放（确保完整性）
+        sessionContext.synthesisState.audioQueue = []; // 清空之前的队列
+        enqueueAudio(sessionContext, audioData);
+        
+        // 更新状态
+        sessionContext.synthesisState.lastSynthesizedText = fullTranslationText;
+        sessionContext.synthesisState.lastSynthesisTime = Date.now();
+        // 重置标点符号索引
+        sessionContext.synthesisState.lastPunctuationIndex = fullTranslationText.length - 1;
+      }
+    }
+  } catch (error) {
+    console.error('标准响应合成失败:', error);
+  } finally {
+    sessionContext.synthesisState.isProcessing = false;
   }
-  
-  // 3. 距离上次合成超过设定时间，且有足够内容
-  if (now - lastTime > synthesisConfig.timeIntervalMs && 
-      translationText.length > synthesisConfig.minLengthForTime && 
-      translationText.length > lastText.length) {
-    console.log('触发条件：时间间隔超过阈值', {
-      interval: now - lastTime,
-      threshold: synthesisConfig.timeIntervalMs
-    });
-    return true;
-  }
-  
-  // 4. 检测到语义停顿（逗号后的较长内容）
-  if (/[,，]/.test(translationText) && 
-      translationText.length > lastText.length + synthesisConfig.semanticGrowthThreshold) {
-    console.log('触发条件：语义停顿检测', {
-      growth: translationText.length - lastText.length,
-      threshold: synthesisConfig.semanticGrowthThreshold
-    });
-    return true;
-  }
-  
-  return false;
 }
+
+// 统一的合成函数入口
+async function performSynthesis(
+  sessionContext: SessionContext,
+  translations: Record<string, string>
+) {
+  if (synthesisConfig.mode === 'Quick') {
+    await performQuickResponseSynthesis(sessionContext, translations);
+  } else {
+    await performStandardResponseSynthesis(sessionContext, translations);
+  }
+}
+
+
 
 async function performManualSynthesis(
   config: ClientConfig,
@@ -336,35 +551,65 @@ async function performManualSynthesis(
   }
 }
 
+// 安全的语言检测辅助函数
+function safeDetectLanguage(result: sdk.TranslationRecognitionResult, useAutoDetect: boolean, fallbackLanguages: string[]): string | null {
+  if (!useAutoDetect) {
+    return null;
+  }
+
+  try {
+    // 方法1：尝试使用官方API（可能会抛出异常）
+    const autoDetectResult = sdk.AutoDetectSourceLanguageResult.fromResult(result);
+    if (autoDetectResult && autoDetectResult.language) {
+      return autoDetectResult.language;
+    }
+  } catch (error) {
+    // 忽略官方API错误，继续尝试其他方法
+  }
+
+  try {
+    // 方法2：尝试访问私有属性
+    const anyResult = result as any;
+    if (anyResult.privDetectedLanguage) {
+      return anyResult.privDetectedLanguage;
+    }
+    
+    // 方法3：尝试其他可能的属性路径
+    if (anyResult.privLanguageDetectionResult && anyResult.privLanguageDetectionResult.language) {
+      return anyResult.privLanguageDetectionResult.language;
+    }
+  } catch (error) {
+    // 静默处理备用方法失败
+  }
+
+  // 回退：使用配置的第一个语言
+  const fallback = fallbackLanguages && fallbackLanguages.length > 0 ? fallbackLanguages[0] : null;
+  return fallback;
+}
+
 function mapTranslations(map: sdk.TranslationRecognitionResult['translations']) {
   const translations: Record<string, string> = {};
-  
-  console.log('mapTranslations 输入:', map, typeof map);
   
   try {
     if (map && typeof map === 'object') {
       // Azure Speech SDK的Translations对象有特殊结构
-      // 从日志看到它有 privMap.privKeys 和 privMap.privValues
       const anyMap = map as any;
       
       if (anyMap.privMap && anyMap.privMap.privKeys && anyMap.privMap.privValues) {
         const keys = anyMap.privMap.privKeys;
         const values = anyMap.privMap.privValues;
-        console.log('发现privMap结构:', { keys, values });
         
         for (let i = 0; i < keys.length && i < values.length; i++) {
           const key = keys[i];
           const value = values[i];
           if (typeof key === 'string' && typeof value === 'string') {
             translations[key] = value;
-            console.log(`翻译提取: ${key} -> ${value}`);
           }
         }
       } else if (typeof anyMap.forEach === 'function') {
         // 尝试forEach方法
         anyMap.forEach((value: string, key: string) => {
           translations[key] = value;
-          console.log(`翻译映射: ${key} -> ${value}`);
         });
       } else if (typeof anyMap.get === 'function') {
         // 尝试Map接口
@@ -374,7 +619,6 @@ function mapTranslations(map: sdk.TranslationRecognitionResult['translations']) 
             const value = anyMap.get(key);
             if (typeof value === 'string') {
               translations[key] = value;
-              console.log(`翻译获取: ${key} -> ${value}`);
             }
           }
         }
@@ -383,18 +627,14 @@ function mapTranslations(map: sdk.TranslationRecognitionResult['translations']) 
         for (const [key, value] of Object.entries(map)) {
           if (typeof value === 'string' && typeof key === 'string') {
             translations[key] = value;
-            console.log(`翻译对象: ${key} -> ${value}`);
           }
         }
       }
-    } else {
-      console.log('未找到翻译数据或数据类型不匹配');
     }
   } catch (error) {
     console.error('处理翻译数据时出错:', error);
   }
   
-  console.log('mapTranslations 结果:', translations);
   return translations;
 }
 
@@ -459,6 +699,10 @@ function createSession(
         const autoDetectConfig = sdk.AutoDetectSourceLanguageConfig.fromLanguages(
           autoDetectLanguages
         );
+        // 设置为连续语言识别模式，与连续识别和语义分段兼容
+        autoDetectConfig.mode = sdk.LanguageIdMode.Continuous;
+        console.log('启用连续语言识别模式 (Continuous)');
+        
         recognizer = sdk.TranslationRecognizer.FromConfig(
           translationConfig,
           autoDetectConfig,
@@ -471,34 +715,74 @@ function createSession(
         );
       }
 
+      // 配置实时标点符号和分段策略
+      console.log('配置 Speech SDK 高级属性...');
+      
+      // 从环境变量应用Speech SDK属性
+      for (const [propertyName, propertyValue] of Object.entries(speechSDKProperties)) {
+        safelySetProperty(recognizer, propertyName, propertyValue);
+      }
+
+      // 应用分段策略配置
+      console.log(`配置分段策略: ${config.segmentationStrategy}`);
+      const segmentationProperties = parseSegmentationProperties(config.segmentationStrategy);
+      
+      let segmentationApplied = false;
+      for (const [propertyName, propertyValue] of Object.entries(segmentationProperties)) {
+        if (safelySetProperty(recognizer, propertyName, propertyValue)) {
+          segmentationApplied = true;
+        }
+      }
+      
+      // 如果语义分段设置失败，回退到静音分段
+      if (config.segmentationStrategy === 'Semantic' && !segmentationApplied) {
+        console.log('语义分段设置失败，回退到静音分段策略...');
+        const fallbackProperties = parseSegmentationProperties('Silence');
+        for (const [propertyName, propertyValue] of Object.entries(fallbackProperties)) {
+          safelySetProperty(recognizer, propertyName, propertyValue);
+        }
+      }
+      
+      // 额外的属性（不在环境变量中）
+      // 注释掉可能导致WebSocket错误1007的属性 - 该属性用于语音合成，不适用于语音翻译
+      // safelySetProperty(recognizer, 'SpeechServiceResponse_RequestWordBoundary', 'true');
+      
+      console.log('Speech SDK 高级属性配置完成');
+
       recognizer.recognizing = async (_sender, event) => {
-        console.log(`识别中 - 原因: ${event.result.reason}, 文本: "${event.result.text}"`);
         if (
           event.result.reason !== sdk.ResultReason.TranslatingSpeech &&
           event.result.reason !== sdk.ResultReason.RecognizingSpeech
         ) {
-          console.log(`跳过识别结果，原因: ${event.result.reason}`);
           return;
         }
+        
+        // 检查空文本，避免处理空的识别段落
+        if (!event.result.text || !event.result.text.trim()) {
+          return;
+        }
+        
         const translations = mapTranslations(event.result.translations);
-        console.log(`实时翻译结果:`, {
-          sourceText: event.result.text,
-          translations,
-          reason: event.result.reason
-        });
+        
+        // 获取检测到的原始语言信息 - 使用安全的检测函数
+        const detectedLanguage = safeDetectLanguage(event.result, useAutoDetect, autoDetectLanguages);
+        
+        console.log(`原文: "${event.result.text}" -> 翻译: ${JSON.stringify(translations)}`);
         
         sendJson(socket, 'transcript.partial', {
           id: event.result.resultId,
           sourceText: event.result.text,
+          detectedLanguage,
           translations
         });
 
-        // 在实时识别中也进行智能合成判断，支持句号等强制触发条件
-        if (config.enableSpeechSynthesis && 
-            sessionContextRef && 
-            shouldTriggerSynthesis(event.result.text, translations, sessionContextRef.synthesisState)) {
-          console.log('实时识别中触发智能合成');
-          await performSmartSynthesis(sessionContextRef, translations);
+        // 根据合成模式决定是否在实时识别中进行合成
+        if (config.enableSpeechSynthesis && sessionContextRef) {
+          if (synthesisConfig.mode === 'Quick') {
+            // 快速响应模式：在实时识别中进行增量合成
+            await performSynthesis(sessionContextRef, translations);
+          }
+          // 标准响应模式：不在实时识别中合成，等待最终结果
         }
       };
 
@@ -506,34 +790,115 @@ function createSession(
       let sessionContextRef: SessionContext;
 
       recognizer.recognized = async (_sender, event) => {
-        console.log(`识别完成 - 原因: ${event.result.reason}, 文本: "${event.result.text}"`);
         if (event.result.reason === sdk.ResultReason.TranslatedSpeech) {
+          
+          // 检查空文本，避免处理空的最终识别结果
+          if (!event.result.text || !event.result.text.trim()) {
+            return;
+          }
+          
           const translations = mapTranslations(event.result.translations);
-          console.log(`最终翻译结果:`, {
-            sourceText: event.result.text,
-            translations,
-            reason: event.result.reason
-          });
+          
+          // 获取检测到的原始语言信息 - 使用安全的检测函数
+          const detectedLanguage = safeDetectLanguage(event.result, useAutoDetect, autoDetectLanguages);
+          
+          console.log(`最终结果 - 原文: "${event.result.text}" -> 翻译: ${JSON.stringify(translations)}`);
           
           sendJson(socket, 'transcript.final', {
             id: event.result.resultId,
             sourceText: event.result.text,
+            detectedLanguage,
             translations
           });
 
-          // 使用智能触发条件决定是否进行语音合成
-          if (config.enableSpeechSynthesis && 
-              sessionContextRef && 
-              shouldTriggerSynthesis(event.result.text, translations, sessionContextRef.synthesisState)) {
-            console.log('智能触发最终合成');
-            await performSmartSynthesis(sessionContextRef, translations);
-          } else if (config.enableSpeechSynthesis) {
-            console.log('智能触发条件未满足，跳过合成');
+          // 最终识别的合成逻辑：合成整个最终文本（如果与之前不同）
+          if (config.enableSpeechSynthesis && sessionContextRef) {
+            const translationText = Object.values(translations)[0] || '';
+            const synthesisState = sessionContextRef.synthesisState;
+            const lastSynthesizedText = synthesisState.lastSynthesizedText || '';
+            
+            // 检查是否是全新的文本或者有显著变化
+            const isNewOrChangedText = !translationText.startsWith(lastSynthesizedText) && 
+                                     !lastSynthesizedText.startsWith(translationText) && 
+                                     translationText !== lastSynthesizedText;
+            
+            if (isNewOrChangedText || translationText.length > lastSynthesizedText.length + 10) {
+              // 如果是新文本或有显著变化，合成整个文本
+              console.log(`最终合成整个文本: "${translationText}"`);
+              
+              if (sessionContextRef.speechSynthesizer && !synthesisState.isProcessing) {
+                synthesisState.isProcessing = true;
+                
+                try {
+                  const result = await new Promise<sdk.SpeechSynthesisResult>((resolve, reject) => {
+                    sessionContextRef.speechSynthesizer!.speakTextAsync(
+                      translationText,
+                      (result) => resolve(result),
+                      (error) => reject(error)
+                    );
+                  });
+                  
+                  if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
+                    const audioData = result.audioData;
+                    if (audioData && audioData.byteLength > 0) {
+                      console.log(`最终合成完成，加入队列: ${audioData.byteLength} 字节`);
+                      // 清空之前的队列，确保最终结果优先播放
+                      synthesisState.audioQueue = [];
+                      enqueueAudio(sessionContextRef, audioData);
+                      
+                      // 更新状态
+                      synthesisState.lastPunctuationIndex = translationText.length - 1;
+                      synthesisState.lastSynthesizedText = translationText;
+                    }
+                  }
+                } catch (error) {
+                  console.error('最终合成失败:', error);
+                } finally {
+                  synthesisState.isProcessing = false;
+                }
+              }
+            } else {
+              // 如果是增量文本，只合成剩余部分
+              const startIndex = lastSynthesizedText.length;
+              const remainingText = translationText.slice(startIndex).trim();
+              
+              if (remainingText && remainingText.length > 0) {
+                console.log(`最终合成剩余文本: "${remainingText}"`);
+                
+                if (sessionContextRef.speechSynthesizer && !synthesisState.isProcessing) {
+                  synthesisState.isProcessing = true;
+                  
+                  try {
+                    const result = await new Promise<sdk.SpeechSynthesisResult>((resolve, reject) => {
+                      sessionContextRef.speechSynthesizer!.speakTextAsync(
+                        remainingText,
+                        (result) => resolve(result),
+                        (error) => reject(error)
+                      );
+                    });
+                    
+                    if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
+                      const audioData = result.audioData;
+                      if (audioData && audioData.byteLength > 0) {
+                        console.log(`最终合成完成，加入队列: ${audioData.byteLength} 字节`);
+                        enqueueAudio(sessionContextRef, audioData);
+                        
+                        // 更新状态
+                        synthesisState.lastPunctuationIndex = translationText.length - 1;
+                        synthesisState.lastSynthesizedText = translationText;
+                      }
+                    }
+                  } catch (error) {
+                    console.error('最终合成失败:', error);
+                  } finally {
+                    synthesisState.isProcessing = false;
+                  }
+                }
+              }
+            }
           }
         } else if (event.result.reason === sdk.ResultReason.NoMatch) {
-          console.warn('无法识别语音片段');
-        } else {
-          console.log(`其他识别结果，原因: ${event.result.reason}`);
+          // 静默处理无匹配结果
         }
       };
 
@@ -563,8 +928,28 @@ function createSession(
           });
         } else if (event.errorCode === sdk.CancellationErrorCode.ConnectionFailure) {
           console.error('连接失败 - 请检查网络连接');
+          
+          // 检查是否是WebSocket错误代码1007（数据格式问题）
+          if (event.errorDetails?.includes('websocket error code: 1007')) {
+            console.error('WebSocket数据验证失败 - 可能是语音分段策略配置问题');
+            console.log('建议解决方案：');
+            console.log('1. 检查当前Azure Speech SDK版本是否支持语义分段');
+            console.log('2. 尝试切换到静音分段策略');
+            console.log('3. 检查PropertyId配置是否正确');
+            
+            sendJson(socket, 'error', {
+              message: '语音配置验证失败，建议尝试切换分段策略或检查SDK兼容性',
+              details: '如果使用语义分段，请确保Azure Speech SDK版本≥1.41'
+            });
+          } else {
+            sendJson(socket, 'error', {
+              message: '无法连接到 Azure Speech 服务，请检查网络连接'
+            });
+          }
+        } else if (event.errorCode === sdk.CancellationErrorCode.ServiceError) {
+          console.error('服务错误 - Azure Speech 服务内部错误');
           sendJson(socket, 'error', {
-            message: '无法连接到 Azure Speech 服务，请检查网络连接'
+            message: '服务内部错误，请稍后重试或联系技术支持'
           });
         } else {
           sendJson(socket, 'error', {
@@ -582,12 +967,10 @@ function createSession(
           let speechSynthesizer: sdk.SpeechSynthesizer | null = null;
           if (config.enableSpeechSynthesis) {
             try {
-              console.log('预热语音合成器连接...');
               const speechConfig = sdk.SpeechConfig.fromSubscription(config.apiKey, config.region);
               speechConfig.speechSynthesisVoiceName = config.voice;
               speechConfig.speechSynthesisOutputFormat = sdk.SpeechSynthesisOutputFormat.Raw24Khz16BitMonoPcm;
               speechSynthesizer = new sdk.SpeechSynthesizer(speechConfig);
-              console.log('语音合成器预热完成');
             } catch (error) {
               console.error('语音合成器预热失败:', error);
             }
@@ -602,7 +985,10 @@ function createSession(
             synthesisState: {
               lastSynthesizedText: '',
               lastSynthesisTime: 0,
-              isProcessing: false
+              isProcessing: false,
+              lastPunctuationIndex: -1,
+              audioQueue: [],
+              isPlaying: false
             },
             disposed: false
           };
@@ -703,22 +1089,27 @@ wss.on('connection', (socket) => {
         console.log('开始创建翻译会话:', message.payload);
         session = await createSession(socket, message.payload);
         initialized = true;
-        console.log('翻译会话创建成功');
         return;
       }
 
       if (!session) {
+        console.log('会话未初始化，忽略消息');
         return;
       }
 
       if (!isBinary) {
+        console.log('收到非二进制消息，忽略');
         return;
       }
 
       const chunk = parseClientMessage(rawData);
       if (chunk instanceof Buffer) {
+        console.log('收到音频数据，长度:', chunk.length);
         const arrayBuffer = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer;
+        
         session.pushStream.write(arrayBuffer);
+      } else {
+        console.log('收到的数据不是Buffer格式:', typeof chunk);
       }
     } catch (error) {
       console.error('处理消息失败', error);

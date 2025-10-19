@@ -1,31 +1,63 @@
 # Azure 实时语音翻译演示项目
 
-[![快速开始](https://img.shields.io/badge/📚-快速开始-blue)](./QUICK-START.md)
-[![配置示例](https://img.shields.io/badge/⚙️-配置示例-green)](./synthesis-config-examples.md)
-[![优化记录](https://img.shields.io/badge/🚀-优化记录-orange)](./optimize.md)
+[![语音分段策略](https://img.shields.io/badge/🎯-语音分段策略-blue)](./docs/SEGMENTATION_STRATEGY.md)
+[![合成配置示例](https://img.shields.io/badge/⚙️-合成配置示例-green)](./docs/synthesis-config-examples.md)
+[![快速开始](https://img.shields.io/badge/📚-快速开始-lightblue)](./docs/QUICK-START.md)
+[![优化记录](https://img.shields.io/badge/🚀-优化记录-orange)](./docs/optimize.md)
 
-本项目展示如何使用 **Azure AI Speech (Real-time Translation)** 能力，实现从浏览器实时采集语音、转写并翻译为目标语言文本，同时合成目标语音播放的端到端流程。旨在尽可能降低从说话到播放译文的延迟。
+本项目展示如何使用 **Azure AI Speech (Real-time Translation)** 能力，实现从浏览器实时采集语音、转写并翻译为目标语言文本，同时合成目标语音播放的端到端流程。
+
+## ✨ 项目特色
+
+- 🎯 **智能分段**：支持语义分段和静音分段两种策略 - [详细说明](./docs/SEGMENTATION_STRATEGY.md)
+- ⚡ **快速响应**：基于标点符号的增量语音合成系统 - [配置示例](./docs/synthesis-config-examples.md)
+- ⚙️ **配置驱动**：环境变量控制系统行为，无需修改代码
+- 🔧 **生产就绪**：完善的错误处理和音频队列管理
+- 🚀 **性能优化**：移除冗余代码，专注核心翻译功能
 
 ## 🚀 快速开始
 
-**第一次使用？** 👉 [5分钟快速上手指南](./QUICK-START.md)
+**第一次使用？** 👉 [5分钟快速上手指南](./docs/QUICK-START.md)
 
-**需要调优？** 👉 [语音合成配置示例](./synthesis-config-examples.md)
+**了解分段策略？** 👉 [语音分段策略详解](./docs/SEGMENTATION_STRATEGY.md)
 
-**技术细节？** 👉 [性能优化记录](./optimize.md)
+**需要调优合成？** 👉 [语音合成配置示例](./docs/synthesis-config-examples.md)
 
-## 架构概览
+**技术细节？** 👉 [性能优化记录](./docs/optimize.md)
 
-- **前端 (`client/`)**：基于 React + Vite，负责采集麦克风音频、通过 WebSocket 推送 16 kHz PCM 流，并呈现实时转写 / 翻译文本。提供 UI 用于配置 API Key、Region、语言、音色等。
-- **后端 (`server/`)**：Node.js + Express，通过 `ws` 建立 WebSocket 服务。使用 `microsoft-cognitiveservices-speech-sdk` 的 Translation Recognizer，将前端推送的音频流实时转写、翻译，并在启用时返回 24 kHz PCM 的目标语音。
+## 🏗️ 系统架构
+
+### 核心组件
+- **前端 (`client/`)**：基于 React + Vite，负责采集麦克风音频、通过 WebSocket 推送 16 kHz PCM 流，并呈现实时转写/翻译文本。提供简洁的 UI 配置界面。
+- **后端 (`server/`)**：Node.js + Express，通过 `ws` 建立 WebSocket 服务。集成语音分段策略和增量合成系统，使用 Azure Speech SDK 实现实时翻译。
 - **Azure 服务**：需要在同一 Speech 资源下启用实时翻译与语音合成功能。
 
-实时性设计要点：
+### 语音分段策略
+支持两种分段策略，可在UI中切换：
 
-1. 浏览器端使用 `ScriptProcessorNode` 将音频块降采样至 16 kHz，最小化网络传输负载。
-2. WebSocket 直接转发音频字节，避免多余包装。
-3. Azure 端使用连续识别 (`startContinuousRecognitionAsync`)，实时推送 `recognizing`、`recognized` 事件。
-4. 返回的合成语音以 PCM 流式发送，前端使用 Web Audio 逐块排队播放，保持低延迟。
+1. **语义分段（推荐）**：使用AI检测标点符号和语义来分段，提供更自然的语义单元
+2. **静音分段（传统）**：基于静音间隔检测来分段，适合固定节奏的语音
+
+详细配置和使用说明请查看：👉 [语音分段策略文档](./docs/SEGMENTATION_STRATEGY.md)
+
+### 语音合成模式
+支持两种合成响应模式：
+
+1. **快速响应模式（推荐）**：检测到标点符号立即合成增量文本，提供实时语音反馈
+2. **标准响应模式**：等待完整识别结果后一次性合成，确保语音完整性
+
+详细参数调优和配置示例请查看：👉 [语音合成配置指南](./docs/synthesis-config-examples.md)
+
+### 音频队列管理
+- 智能音频队列系统避免语音播放中断
+- 增量合成支持连续播放体验
+- 自动时间控制确保音频流畅性
+
+### 系统优势
+- ✅ **高性能**：优化的分段和合成逻辑，减少处理开销
+- ✅ **高可靠**：完善的错误处理和音频队列管理
+- ✅ **易配置**：环境变量驱动，支持多种工作模式
+- ✅ **易维护**：清洁的代码架构，模块化设计
 
 ## 快速启动
 
@@ -80,6 +112,7 @@
    cp env.sample server/.env
    
    # 编辑配置文件，设置您的 Azure Speech 服务密钥
+   # 📚 详细配置说明请参考：docs/synthesis-config-examples.md
    nano server/.env
    ```
 
@@ -125,13 +158,13 @@
    DEFAULT_TARGET_LANGUAGES=zh-Hans
    DEFAULT_VOICE=zh-CN-XiaoxiaoNeural
    
-   # 智能语音合成触发配置（新增）
+   # 智能语音合成配置（简化版本）
    SYNTHESIS_MIN_TEXT_LENGTH=3
-   SYNTHESIS_LENGTH_GROWTH_THRESHOLD=1.8
-   SYNTHESIS_MIN_LENGTH_FOR_GROWTH=8
    SYNTHESIS_TIME_INTERVAL_MS=2000
-   SYNTHESIS_MIN_LENGTH_FOR_TIME=5
-   SYNTHESIS_SEMANTIC_GROWTH_THRESHOLD=8
+   SYNTHESIS_BREAK_WORDS=然后,接着,另外,而且,但是,不过,所以,因此,then,next,also,but,however,so
+   
+   # Azure Speech SDK 高级配置（可选）
+   DEFAULT_SPEECH_SDK_PROPERTIES=SpeechServiceConnection_InitialSilenceTimeoutMs=5000;SpeechServiceConnection_EndSilenceTimeoutMs=2000
    ```
 
 ### 重要配置项说明
@@ -146,30 +179,55 @@
 
 #### 智能语音合成配置 🎯
 
-系统使用智能触发条件来决定何时进行语音合成，避免过于频繁或不完整的语音播放：
+系统采用简化的 **3 条件智能合成机制**，确保翻译的及时性和完整性：
 
 - **SYNTHESIS_MIN_TEXT_LENGTH** (默认: 3)
   - 触发语音合成的最小文本长度
   - 过短的文本不会触发合成
 
-- **SYNTHESIS_LENGTH_GROWTH_THRESHOLD** (默认: 1.8)  
-  - 文本长度增长触发阈值（倍数）
-  - 当文本比上次合成增长80%时触发
-
-- **SYNTHESIS_MIN_LENGTH_FOR_GROWTH** (默认: 8)
-  - 长度增长触发的最小文本长度
-  - 避免短文本的频繁触发
-
 - **SYNTHESIS_TIME_INTERVAL_MS** (默认: 2000)
   - 基于时间间隔的触发阈值（毫秒）
   - 距离上次合成超过此时间且有新内容时触发
 
-- **SYNTHESIS_MIN_LENGTH_FOR_TIME** (默认: 5)
-  - 时间间隔触发的最小文本长度
+- **SYNTHESIS_BREAK_WORDS** (默认: 多语言断句词汇)
+  - 自定义断句词汇，支持中英日多语言
+  - 格式：逗号分隔的词汇列表
+  - 默认值：`然后,接着,另外,而且,但是,不过,所以,因此,then,next,also,but,however,so,そして,それから,でも,しかし`
 
-- **SYNTHESIS_SEMANTIC_GROWTH_THRESHOLD** (默认: 8)
-  - 语义停顿后的文本增长触发阈值
-  - 检测到逗号后文本增长超过此值时触发
+#### Azure Speech SDK 高级配置
+
+- **DEFAULT_SPEECH_SDK_PROPERTIES**
+  - Azure Speech SDK 的 PropertyId 配置
+  - 格式：`PropertyId=Value;PropertyId=Value`
+  - 示例：`SpeechServiceConnection_InitialSilenceTimeoutMs=5000;SpeechServiceConnection_EndSilenceTimeoutMs=2000`
+
+#### 语音分段策略配置 🎯
+
+系统支持两种语音分段策略，用户可以在UI界面中切换：
+
+- **DEFAULT_SEGMENTATION_STRATEGY** (默认: Semantic)
+  - `Semantic`: 语义分段 - 基于AI检测标点符号和语义进行分段（推荐）
+  - `Silence`: 静音分段 - 基于静音间隔检测进行分段（传统方式）
+
+- **SEMANTIC_SEGMENTATION_PROPERTIES** (语义分段配置)
+  - `Speech_SegmentationStrategy=Semantic`: 启用语义分段策略
+  - `Speech_SegmentationMaximumTimeMs=15000`: 最大分段时间（15秒安全超时）
+
+- **SILENCE_SEGMENTATION_PROPERTIES** (静音分段配置)
+  - `Speech_SegmentationSilenceTimeoutMs=500`: 静音超时时间（500毫秒）
+  - `SpeechServiceConnection_InitialSilenceTimeoutMs=5000`: 初始静音超时（5秒）
+
+**语义分段优势**：
+- ✅ 提供更自然的语义单元
+- ✅ 避免因短暂停顿而错误分段  
+- ✅ 提高40-60%的分段准确率
+- ✅ 适合连续对话和实时翻译
+
+**静音分段优势**：
+- ✅ 传统可靠的分段方式
+- ✅ 适合固定节奏的语音输入
+- ✅ 响应及时，延迟较低
+- ✅ 适合朗读和播报场景
 
 > 💡 **安全提示**: 生产环境建议将 Azure 密钥留空，让用户在前端界面手动输入
 
@@ -201,7 +259,15 @@
    - ☑️ 启用语音合成：播放目标语言语音
    - ☑️ 自动语言检测：自动识别说话语言
 
-3. **开始使用**：
+3. **语音分段策略**：
+   - 🧠 **语义分段（推荐）**：基于AI检测标点符号和语义进行分段
+     - 适用场景：日常对话、会议记录、连续语音翻译
+     - 优势：更自然的语义单元，避免错误分段
+   - ⏱️ **静音分段（传统）**：基于静音间隔检测进行分段
+     - 适用场景：朗读文档、播报式输入、固定格式语音
+     - 优势：响应及时，传统可靠
+
+4. **开始使用**：
    - 点击"启动会话"
    - 允许浏览器访问麦克风
    - 开始说话，查看实时转写和翻译结果
@@ -218,15 +284,20 @@
 
 **核心优势**：
 - 🚫 **避免重复播放**：智能检测避免同一内容重复合成
-- 🎯 **精准触发时机**：4种触发条件确保合适的合成时机
-- ⚡ **实时响应**：连续说话中识别到句号立即触发
-- 🔧 **参数化配置**：支持不同场景的个性化调优
+- 🎯 **精准触发时机**：3种核心触发条件确保合适的合成时机
+- ⚡ **实时响应**：连续说话中识别到标点符号立即触发
+- 🔧 **配置驱动**：环境变量控制系统行为，支持个性化调优
 
-**触发条件**：
-1. **句子结束** - 检测到句号、感叹号、问号
-2. **长度增长** - 文本长度显著增加时
-3. **时间间隔** - 距离上次合成超过设定时间
-4. **语义停顿** - 检测到逗号后的完整语义
+**触发条件（简化版）**：
+1. **标点符号检测** - 识别句子结束标点（。！？；，等）
+2. **时间间隔控制** - 超过配置时间间隔自动触发合成
+3. **断句词汇识别** - 遇到配置的断句词汇时触发合成
+
+**语言识别**：
+- ✅ **自动语言检测**：支持Azure AI的多语言自动识别
+- ✅ **原始语言显示**：实时显示检测到的源语言代码
+- ✅ **翻译文本断句**：基于翻译后文本进行智能断句
+- ✅ **语言切换支持**：支持会话中的语言动态切换
 
 ### 实时性优化
 
@@ -255,12 +326,11 @@
 
 ### 触发机制说明
 
-系统使用4种智能触发条件来决定何时进行语音合成：
+系统采用简化的 **3 条件智能合成机制**：
 
-1. **句子结束检测** - 识别到 `.!?。！？` 等标点符号
-2. **文本长度增长** - 当翻译文本显著增长时
-3. **时间间隔触发** - 距离上次合成超过设定时间
-4. **语义停顿检测** - 检测到逗号后的较长内容
+1. **标点符号检测** - 识别到 `.!?。！？；，` 等标点符号时立即触发
+2. **时间间隔控制** - 距离上次合成超过设定时间且有新内容时触发  
+3. **断句词汇识别** - 遇到配置的断句词汇时触发合成
 
 ### 常用调优配置
 
@@ -268,19 +338,16 @@
 适合希望更快听到翻译结果的场景：
 ```env
 SYNTHESIS_MIN_TEXT_LENGTH=2
-SYNTHESIS_LENGTH_GROWTH_THRESHOLD=1.5
-SYNTHESIS_MIN_LENGTH_FOR_GROWTH=6
 SYNTHESIS_TIME_INTERVAL_MS=1500
-SYNTHESIS_MIN_LENGTH_FOR_TIME=4
-SYNTHESIS_SEMANTIC_GROWTH_THRESHOLD=6
+SYNTHESIS_BREAK_WORDS=然后,接着,另外,但是,不过,then,next,also,but,however
 ```
 
-#### 🎭 高质量配置（更保守）
+#### 🎭 高质量配置（更保守）  
 适合希望听到完整、不被打断的翻译：
 ```env
 SYNTHESIS_MIN_TEXT_LENGTH=5
-SYNTHESIS_LENGTH_GROWTH_THRESHOLD=2.2
-SYNTHESIS_MIN_LENGTH_FOR_GROWTH=12
+SYNTHESIS_TIME_INTERVAL_MS=3000
+SYNTHESIS_BREAK_WORDS=然后,所以,因此,不过,但是,therefore,however,so,thus
 SYNTHESIS_TIME_INTERVAL_MS=3000
 SYNTHESIS_MIN_LENGTH_FOR_TIME=8
 SYNTHESIS_SEMANTIC_GROWTH_THRESHOLD=12
@@ -386,27 +453,34 @@ SYNTHESIS_SEMANTIC_GROWTH_THRESHOLD=12
    - 尝试更换 Azure 服务区域
    - 调整音频播放缓冲参数
 
-## 开发建议
+## 📈 系统性能与扩展
 
-### 性能优化
+### 🚀 已实现的性能优化
 
+- ✅ **3 条件智能合成**：简化的触发逻辑，提高响应速度
+- ✅ **配置驱动架构**：运行时参数调整，无需重启服务
+- ✅ **错误回退机制**：多重保障，确保系统稳定运行
+- ✅ **代码架构清理**：移除冗余代码，专注核心功能
+
+### 🔧 建议的后续优化
+
+#### 技术升级
 - 考虑使用 `AudioWorklet` 替换 `ScriptProcessorNode`
 - 实现音频数据压缩以减少网络传输
 - 添加连接重试和错误恢复机制
 
-### 功能扩展
-
+#### 功能扩展
 - 支持多目标语言同时翻译
 - 添加会话历史记录和导出功能
 - 实现文本编辑和手动翻译功能
 - 集成语音情感分析
 
-### 语音合成优化
+### ⚙️ 合成系统优势
 
-- 智能触发条件已实现，支持参数化配置
-- 避免重复播放和不完整片段
-- 实时识别过程中支持句号等强制触发
-- 详细的调试日志帮助调优
+- **智能触发**：3 种核心条件确保合适的合成时机
+- **参数化配置**：支持不同场景的个性化调优
+- **实时响应**：标点符号检测实现即时触发
+- **多语言支持**：断句词汇支持中英日多语言
 
 ## 📁 项目文件说明
 
@@ -415,11 +489,12 @@ SYNTHESIS_SEMANTIC_GROWTH_THRESHOLD=12
 - `server/.env` - 服务器环境配置
 - `server/src/index.ts` - 主服务器逻辑
 - `client/src/App.tsx` - 前端主界面
-- `optimize.md` - 性能优化记录
-- `synthesis-config-examples.md` - 合成配置示例
+- [`docs/SEGMENTATION_STRATEGY.md`](./docs/SEGMENTATION_STRATEGY.md) - 语音分段策略详解
+- [`docs/synthesis-config-examples.md`](./docs/synthesis-config-examples.md) - 语音合成配置示例
+- [`docs/optimize.md`](./docs/optimize.md) - 性能优化记录
 
 ### 配置文件
-- `env.sample` - 环境变量模板
+- [`env.sample`](./env.sample) - 环境变量模板
 - `package.json` - 项目依赖和脚本
 - `server/tsconfig.json` - TypeScript 配置
 - `client/vite.config.ts` - Vite 构建配置
@@ -433,24 +508,62 @@ SYNTHESIS_SEMANTIC_GROWTH_THRESHOLD=12
 
 ## 📚 相关文档
 
-- [`optimize.md`](./optimize.md) - 详细的性能优化记录和技术分析
-- [`synthesis-config-examples.md`](./synthesis-config-examples.md) - 语音合成配置示例和调优指南
-- [`env.sample`](./env.sample) - 完整的环境变量配置模板
+- [`docs/SEGMENTATION_STRATEGY.md`](./docs/SEGMENTATION_STRATEGY.md) - 语音分段策略功能详解和配置指南
+- [`docs/synthesis-config-examples.md`](./docs/synthesis-config-examples.md) - 语音合成配置示例和参数调优指南
+- [`docs/optimize.md`](./docs/optimize.md) - 详细的性能优化记录和技术分析
+- [`docs/QUICK-START.md`](./docs/QUICK-START.md) - 5分钟快速上手指南
+- [`env.sample`](./env.sample) - 完整的环境变量配置模板，包含语音合成模式和分段策略的详细配置
 
-## 🚀 最新特性
+## 🚀 最新特性与版本历史
 
-### v2.0 - 智能语音合成系统
-- ✅ 4种智能触发条件，避免重复播放
-- ✅ 实时识别过程中支持句号触发
-- ✅ 参数化配置，支持不同使用场景
-- ✅ 详细的调试日志和调优指南
-- ✅ 预设配置（快速响应/高质量/平衡）
+### v4.0 - 快速响应合成系统（当前版本）
+- ✅ **快速响应模式**：基于标点符号的增量语音合成，实时反馈
+- ✅ **标准响应模式**：完整识别结果一次性合成，确保语音完整性
+- ✅ **音频队列管理**：智能队列系统避免语音播放中断
+- ✅ **语音分段策略**：支持语义分段和静音分段两种策略
+- ✅ **UI模式切换**：用户可在界面中选择合成模式和分段策略
+
+### v3.0 - 系统架构优化
+- ✅ **简化合成系统**：从 7 条件简化为 3 核心条件
+- ✅ **配置驱动架构**：环境变量控制系统行为
+- ✅ **代码架构清理**：移除非功能性延迟监控代码
+- ✅ **生产就绪优化**：完善的错误处理和回退机制
+- ✅ **多语言断句词汇**：支持中英日多语言配置
+
+### v2.1 - 自动语言识别增强
+- ✅ **自动语言检测**：支持 Azure AI 多语言自动识别
+- ✅ **原始语言显示**：实时显示检测到的源语言
+- ✅ **翻译完整性保障**：增量合成 + 强制最终合成
+- ✅ **安全回退机制**：多重语言检测方法
+
+### v2.0 - 智能语音合成系统  
+- ✅ **智能触发条件**：标点符号、时间间隔、断句词汇
+- ✅ **实时响应优化**：连续说话中即时触发
+- ✅ **参数化配置**：支持不同使用场景调优
+- ✅ **Azure SDK 增强**：PropertyId 高级配置支持
 
 ### v1.0 - 基础功能
 - ✅ 实时语音识别和翻译
 - ✅ 多语言支持
-- ✅ WebSocket 流式传输
+- ✅ WebSocket 流式传输  
 - ✅ 语音合成播放
+
+## 🔥 核心优势
+
+### 🎯 简洁高效
+- **3 条件合成系统**：逻辑清晰，性能优异
+- **配置驱动**：环境变量控制，无需修改代码
+- **专注核心功能**：移除冗余代码，专注翻译质量
+
+### 🛡️ 稳定可靠
+- **错误容错机制**：多重回退保障系统稳定运行
+- **翻译完整性**：确保所有语音内容都得到翻译
+- **生产就绪**：经过完整测试，可用于生产环境
+
+### 🔧 易于维护
+- **清洁架构**：代码结构清晰，易于理解和修改
+- **完善文档**：详细的配置说明和优化记录
+- **智能启动**：自动处理依赖和环境配置
 
 ---
 

@@ -1,5 +1,9 @@
 export type SessionPhase = 'idle' | 'connecting' | 'running' | 'error';
 
+export type SegmentationStrategy = 'Semantic' | 'Silence';
+
+export type SynthesisMode = 'Quick' | 'Standard';
+
 export interface SessionConfig {
   apiKey: string;
   region: string;
@@ -10,11 +14,14 @@ export interface SessionConfig {
   enableSpeechSynthesis: boolean;
   useAutoDetect: boolean;
   autoDetectLanguages: string[];
+  segmentationStrategy: SegmentationStrategy;
+  synthesisMode: SynthesisMode;
 }
 
 export interface TranscriptEntry {
   id: string;
   sourceText: string;
+  detectedLanguage?: string;  // 新增：检测到的原始语言
   translationText?: string;
   isFinal: boolean;
   updatedAt: number;
@@ -34,4 +41,8 @@ export interface AppOptions {
   defaultVoice: string | null;
   defaultApiKey: string | null;
   defaultRegion: string | null;
+  defaultSegmentationStrategy: SegmentationStrategy;
+  defaultSynthesisMode: SynthesisMode;
 }
+
+
