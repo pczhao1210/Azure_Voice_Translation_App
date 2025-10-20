@@ -4,6 +4,7 @@
 - [概述](#概述)
 - [快速响应模式配置](#快速响应模式配置)
 - [标准响应模式配置](#标准响应模式配置)
+- [混合响应模式配置](#混合响应模式配置)
 - [参数调优影响分析](#参数调优影响分析)
 - [实际场景配置示例](#实际场景配置示例)
 - [性能对比测试](#性能对比测试)
@@ -11,11 +12,12 @@
 
 ## 概述
 
-Azure 实时语音翻译应用支持两种语音合成模式，每种模式都有独特的配置参数，不同的参数设置会直接影响用户体验和系统性能。
+Azure 实时语音翻译应用支持三种语音合成模式，每种模式都有独特的配置参数，不同的参数设置会直接影响用户体验和系统性能。
 
 ### 支持的合成模式
-- **快速响应模式（Quick）**：基于标点符号的增量合成 ⭐ 推荐
+- **快速响应模式（Quick）**：基于标点符号的增量合成
 - **标准响应模式（Standard）**：完整识别结果的一次性合成
+- **混合响应模式（Hybrid）**：前N句快速，后续标准 ⭐ 推荐
 
 > 💡 **返回主文档**: [README.md](../README.md) | **分段策略**: [SEGMENTATION_STRATEGY.md](./SEGMENTATION_STRATEGY.md)
 
@@ -128,6 +130,61 @@ STANDARD_RESPONSE_MIN_LENGTH=8
 STANDARD_RESPONSE_MIN_LENGTH=15
 ```
 
+## 混合响应模式配置
+
+### 基础配置参数
+
+```bash
+# 混合响应模式
+DEFAULT_SYNTHESIS_MODE=Hybrid
+
+# 混合模式专用配置
+HYBRID_QUICK_SENTENCE_COUNT=3
+HYBRID_MODE_SWITCH_NOTIFICATION=false
+
+# 继承快速响应和标准响应的所有配置
+QUICK_RESPONSE_PUNCTUATION=，。！？；：、,.!?;:․
+QUICK_RESPONSE_MIN_LENGTH=2
+QUICK_RESPONSE_INTERVAL_MS=500
+STANDARD_RESPONSE_MIN_LENGTH=5
+```
+
+### 参数详解
+
+#### 1. 快速句子数量 (`HYBRID_QUICK_SENTENCE_COUNT`)
+**作用**: 前N句使用快速响应，之后切换到标准响应
+**默认值**: `3`
+
+**调优建议**:
+- **1-2句**: 适合演讲场景，快速开始但很快确保准确性
+- **3-5句**: 适合对话场景，平衡速度和准确性 ⭐ 推荐
+- **6句以上**: 适合快节奏场景，更多快速反馈
+
+#### 2. 模式切换提示 (`HYBRID_MODE_SWITCH_NOTIFICATION`)
+**作用**: 是否在切换模式时输出日志提示
+**默认值**: `false`
+
+**使用建议**:
+- **true**: 开发调试时使用，便于观察模式切换
+- **false**: 生产环境使用，保持日志简洁
+
+### 工作原理
+
+```
+句子1: 你好，今天天气很好      → 快速响应（检测标点立即合成）
+句子2: 我想预约一个会议。    → 快速响应（检测标点立即合成）  
+句子3: 会议时间安排在明天上午 → 快速响应（检测标点立即合成）
+句子4: 请确认您的参会时间... → 标准响应（等待完整识别）
+句子5及以后: ...             → 标准响应（确保准确性）
+```
+
+### 优势分析
+
+- **🚀 快速启动**: 前几句提供即时反馈，用户体验流畅
+- **🎯 准确保障**: 后续句子确保翻译质量，适合重要内容
+- **⚖️ 完美平衡**: 结合两种模式的优点，避免各自缺点
+- **🔧 灵活配置**: 可根据场景调整快速句子数量
+
 ## 参数调优影响分析
 
 ### 用户体验影响
@@ -136,6 +193,7 @@ STANDARD_RESPONSE_MIN_LENGTH=15
 |---------|---------|-----------|---------|----------|
 | 快速+敏感参数 | ⭐⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐⭐ | 实时对话、客服 |
 | 快速+平衡参数 | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | 会议翻译、日常使用 |
+| 混合+平衡参数 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | 所有场景 ⭐ 推荐 |
 | 快速+保守参数 | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐ | 演讲、播报 |
 | 标准模式 | ⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐ | 文档朗读、正式场合 |
 
@@ -205,13 +263,27 @@ DEFAULT_SYNTHESIS_MODE=Standard
 STANDARD_RESPONSE_MIN_LENGTH=10
 ```
 
-### 5. 🌐 多语言混合场景
+### 5. 💎 智能平衡场景 ⭐ 推荐
+**需求**: 既要快速响应又要保证质量
+```bash
+DEFAULT_SYNTHESIS_MODE=Hybrid
+HYBRID_QUICK_SENTENCE_COUNT=3
+HYBRID_MODE_SWITCH_NOTIFICATION=false
+QUICK_RESPONSE_PUNCTUATION=，。！？；：、,.!?;:
+QUICK_RESPONSE_MIN_LENGTH=2
+QUICK_RESPONSE_INTERVAL_MS=500
+STANDARD_RESPONSE_MIN_LENGTH=5
+```
+
+### 6. 🌐 多语言混合场景
 **需求**: 支持多语言标点符号
 ```bash
-DEFAULT_SYNTHESIS_MODE=Quick
+DEFAULT_SYNTHESIS_MODE=Hybrid
+HYBRID_QUICK_SENTENCE_COUNT=2
 QUICK_RESPONSE_PUNCTUATION=，。！？；：、,.!?;:․｡｡．！？；：｜、
 QUICK_RESPONSE_MIN_LENGTH=3
 QUICK_RESPONSE_INTERVAL_MS=600
+STANDARD_RESPONSE_MIN_LENGTH=8
 ```
 
 ## 性能对比测试

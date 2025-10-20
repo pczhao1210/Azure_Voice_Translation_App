@@ -2,7 +2,7 @@ export type SessionPhase = 'idle' | 'connecting' | 'running' | 'error';
 
 export type SegmentationStrategy = 'Semantic' | 'Silence';
 
-export type SynthesisMode = 'Quick' | 'Standard';
+export type SynthesisMode = 'Quick' | 'Standard' | 'Hybrid';
 
 export interface SessionConfig {
   apiKey: string;

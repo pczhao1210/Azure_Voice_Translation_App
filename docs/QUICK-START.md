@@ -43,19 +43,29 @@ open http://localhost:5173
 
 ### 一键应用预设配置
 
-**快速响应模式**（适合演示）：
+**混合响应模式**（⭐ 推荐，适合所有场景）：
 ```bash
-echo 'SYNTHESIS_LENGTH_GROWTH_THRESHOLD=1.5
+echo 'DEFAULT_SYNTHESIS_MODE=Hybrid
+HYBRID_QUICK_SENTENCE_COUNT=3
+QUICK_RESPONSE_PUNCTUATION=，。！？；：、,.!?;:
+QUICK_RESPONSE_MIN_LENGTH=2
+STANDARD_RESPONSE_MIN_LENGTH=5' >> server/.env
+./start.sh dev
+```
+
+**快速响应模式**（适合实时对话）：
+```bash
+echo 'DEFAULT_SYNTHESIS_MODE=Quick
+SYNTHESIS_LENGTH_GROWTH_THRESHOLD=1.5
 SYNTHESIS_TIME_INTERVAL_MS=1500
 SYNTHESIS_MIN_TEXT_LENGTH=2' >> server/.env
 ./start.sh dev
 ```
 
-**高质量模式**（适合正式会议）：
+**标准响应模式**（适合正式会议）：
 ```bash
-echo 'SYNTHESIS_LENGTH_GROWTH_THRESHOLD=2.2
-SYNTHESIS_TIME_INTERVAL_MS=3000
-SYNTHESIS_MIN_TEXT_LENGTH=5' >> server/.env
+echo 'DEFAULT_SYNTHESIS_MODE=Standard
+STANDARD_RESPONSE_MIN_LENGTH=8' >> server/.env
 ./start.sh dev
 ```
 

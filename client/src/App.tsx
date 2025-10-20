@@ -560,11 +560,14 @@ export default function App() {
               >
                 <option value="Quick">快速响应 - 检测标点符号立即合成（推荐）</option>
                 <option value="Standard">标准响应 - 等待完整识别结果</option>
+                <option value="Hybrid">混合响应 - 前N句快速，后续标准（最佳体验）</option>
               </select>
               <small>
                 {config.synthesisMode === 'Quick' 
                   ? '检测到标点符号后立即合成增量文本，提供更快的语音反馈体验'
-                  : '等待完整识别结果后一次性合成，确保语音的完整性和准确性'
+                  : config.synthesisMode === 'Standard'
+                  ? '等待完整识别结果后一次性合成，确保语音的完整性和准确性'
+                  : '前几句采用快速响应提供即时反馈，后续句子采用标准模式确保准确性，平衡速度和质量'
                 }
               </small>
             </div>

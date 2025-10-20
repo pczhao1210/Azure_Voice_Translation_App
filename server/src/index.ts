@@ -18,7 +18,7 @@ interface LanguageOption {
 }
 
 type SegmentationStrategy = 'Semantic' | 'Silence';
-type SynthesisMode = 'Quick' | 'Standard';
+type SynthesisMode = 'Quick' | 'Standard' | 'Hybrid';
 
 interface ServerOptions {
   fromLanguages: LanguageOption[];
@@ -45,6 +45,11 @@ interface SynthesisConfig {
   // 标准响应模式配置
   standardResponse: {
     minLength: number;
+  };
+  // 混合响应模式配置
+  hybridResponse: {
+    quickSentenceCount: number;
+    modeSwitchNotification: boolean;
   };
 }
 
@@ -74,7 +79,7 @@ const targetLanguageDefaults = parseStringList(
 
 // 解析新的合成配置
 function parseSynthesisConfig(): SynthesisConfig {
-  const mode = (process.env.DEFAULT_SYNTHESIS_MODE || 'Quick') as SynthesisMode;
+  const mode = (process.env.DEFAULT_SYNTHESIS_MODE || 'Hybrid') as SynthesisMode;
   
   // 解析快速响应标点符号
   const punctuationString = process.env.QUICK_RESPONSE_PUNCTUATION || '，。！？；：、,.!?;:․';
@@ -89,6 +94,10 @@ function parseSynthesisConfig(): SynthesisConfig {
     },
     standardResponse: {
       minLength: parseInt(process.env.STANDARD_RESPONSE_MIN_LENGTH || '5')
+    },
+    hybridResponse: {
+      quickSentenceCount: parseInt(process.env.HYBRID_QUICK_SENTENCE_COUNT || '3'),
+      modeSwitchNotification: process.env.HYBRID_MODE_SWITCH_NOTIFICATION === 'true'
     }
   };
 }
@@ -106,7 +115,7 @@ const serverOptions: ServerOptions = {
   defaultApiKey: process.env.AZURE_SPEECH_KEY ?? null,
   defaultRegion: process.env.AZURE_SPEECH_REGION ?? null,
   defaultSegmentationStrategy: (process.env.DEFAULT_SEGMENTATION_STRATEGY as SegmentationStrategy) ?? 'Semantic',
-  defaultSynthesisMode: (process.env.DEFAULT_SYNTHESIS_MODE as SynthesisMode) ?? 'Quick'
+  defaultSynthesisMode: (process.env.DEFAULT_SYNTHESIS_MODE as SynthesisMode) ?? 'Hybrid'
 };
 
 const synthesisConfig = parseSynthesisConfig();
@@ -240,6 +249,8 @@ interface SynthesisState {
   lastPunctuationIndex: number; // 用于快速响应模式跟踪标点符号位置
   audioQueue: ArrayBuffer[]; // 音频队列
   isPlaying: boolean; // 是否正在播放音频
+  sentenceCount: number; // 混合模式：已完成的句子计数
+  isHybridModeActive: boolean; // 混合模式：是否仍在快速响应阶段
 }
 
 interface SessionContext {
@@ -354,29 +365,29 @@ async function performQuickResponseSynthesis(
     return;
   }
   
-  // 查找最后一个标点符号位置（而不是第一个新的标点符号）
-  let lastPunctuationIndex = -1;
-  for (let i = fullTranslationText.length - 1; i >= 0; i--) {
+  // 查找从上次合成位置之后的第一个新标点符号
+  let newPunctuationIndex = -1;
+  for (let i = synthesisState.lastPunctuationIndex + 1; i < fullTranslationText.length; i++) {
     if (config.punctuation.includes(fullTranslationText[i])) {
-      lastPunctuationIndex = i;
+      newPunctuationIndex = i;
       break;
     }
   }
   
-  // 如果没有找到标点符号，或者已经合成过这个位置，不合成
-  if (lastPunctuationIndex === -1 || lastPunctuationIndex <= synthesisState.lastPunctuationIndex) {
+  // 如果没有找到新的标点符号，不合成
+  if (newPunctuationIndex === -1) {
     return;
   }
   
-  // 计算需要合成的文本：从上次合成位置到最后一个标点符号
+  // 计算需要合成的文本：从上次合成位置到新找到的标点符号
   const startIndex = synthesisState.lastPunctuationIndex + 1;
-  const textToSynthesize = fullTranslationText.slice(startIndex, lastPunctuationIndex + 1).trim();
+  const textToSynthesize = fullTranslationText.slice(startIndex, newPunctuationIndex + 1).trim();
   
   if (!textToSynthesize || textToSynthesize.length === 0) {
     return;
   }
   
-  console.log(`快速响应合成: "${textToSynthesize}" (检测到标点: "${fullTranslationText[lastPunctuationIndex]}")`);
+  console.log(`快速响应合成: "${textToSynthesize}" (检测到标点: "${fullTranslationText[newPunctuationIndex]}")`);
   
   // 标记开始处理
   sessionContext.synthesisState.isProcessing = true;
@@ -398,10 +409,20 @@ async function performQuickResponseSynthesis(
         // 将音频加入队列而不是直接发送
         enqueueAudio(sessionContext, audioData);
         
-        // 更新状态：记录已经合成到最后一个标点符号的位置
-        sessionContext.synthesisState.lastPunctuationIndex = lastPunctuationIndex;
+        // 更新状态：记录已经合成到新标点符号的位置
+        sessionContext.synthesisState.lastPunctuationIndex = newPunctuationIndex;
         sessionContext.synthesisState.lastSynthesisTime = now;
-        sessionContext.synthesisState.lastSynthesizedText = fullTranslationText.slice(0, lastPunctuationIndex + 1);
+        sessionContext.synthesisState.lastSynthesizedText = fullTranslationText.slice(0, newPunctuationIndex + 1);
+        
+        // 混合模式：检查是否遇到句子结束符号，如果是则增加句子计数
+        if (synthesisConfig.mode === 'Hybrid') {
+          const punctuation = fullTranslationText[newPunctuationIndex];
+          const sentenceEndPunctuation = ['。', '！', '？', '.', '!', '?'];
+          if (sentenceEndPunctuation.includes(punctuation)) {
+            sessionContext.synthesisState.sentenceCount++;
+            console.log(`混合模式：快速响应完成第 ${sessionContext.synthesisState.sentenceCount} 句`);
+          }
+        }
       }
     }
   } catch (error) {
@@ -476,6 +497,31 @@ async function performStandardResponseSynthesis(
   }
 }
 
+// 混合响应合成：前N句快速，后续标准
+async function performHybridResponseSynthesis(
+  sessionContext: SessionContext,
+  translations: Record<string, string>
+) {
+  const synthesisState = sessionContext.synthesisState;
+  
+  // 检查是否还在快速响应阶段
+  if (synthesisState.isHybridModeActive && synthesisState.sentenceCount < synthesisConfig.hybridResponse.quickSentenceCount) {
+    // 前N句使用快速响应
+    await performQuickResponseSynthesis(sessionContext, translations);
+  } else {
+    // 第一次切换到标准模式时的提示
+    if (synthesisState.isHybridModeActive) {
+      synthesisState.isHybridModeActive = false;
+      if (synthesisConfig.hybridResponse.modeSwitchNotification) {
+        console.log(`混合模式：已完成${synthesisConfig.hybridResponse.quickSentenceCount}句快速响应，切换到标准模式以确保准确性`);
+      }
+    }
+    
+    // 使用标准响应
+    await performStandardResponseSynthesis(sessionContext, translations);
+  }
+}
+
 // 统一的合成函数入口
 async function performSynthesis(
   sessionContext: SessionContext,
@@ -483,8 +529,10 @@ async function performSynthesis(
 ) {
   if (synthesisConfig.mode === 'Quick') {
     await performQuickResponseSynthesis(sessionContext, translations);
-  } else {
+  } else if (synthesisConfig.mode === 'Standard') {
     await performStandardResponseSynthesis(sessionContext, translations);
+  } else if (synthesisConfig.mode === 'Hybrid') {
+    await performHybridResponseSynthesis(sessionContext, translations);
   }
 }
 
@@ -778,8 +826,8 @@ function createSession(
 
         // 根据合成模式决定是否在实时识别中进行合成
         if (config.enableSpeechSynthesis && sessionContextRef) {
-          if (synthesisConfig.mode === 'Quick') {
-            // 快速响应模式：在实时识别中进行增量合成
+          if (synthesisConfig.mode === 'Quick' || synthesisConfig.mode === 'Hybrid') {
+            // 快速响应模式和混合模式：在实时识别中进行增量合成
             await performSynthesis(sessionContextRef, translations);
           }
           // 标准响应模式：不在实时识别中合成，等待最终结果
@@ -811,8 +859,20 @@ function createSession(
             translations
           });
 
-          // 最终识别的合成逻辑：合成整个最终文本（如果与之前不同）
+          // 最终识别的合成逻辑：根据合成模式决定处理方式
           if (config.enableSpeechSynthesis && sessionContextRef) {
+            // 检查混合模式是否还在快速响应阶段
+            const isHybridInQuickPhase = synthesisConfig.mode === 'Hybrid' && 
+                                       sessionContextRef.synthesisState.isHybridModeActive && 
+                                       sessionContextRef.synthesisState.sentenceCount < synthesisConfig.hybridResponse.quickSentenceCount;
+            
+            // 如果是快速模式或混合模式的快速阶段，使用快速响应逻辑
+            if (synthesisConfig.mode === 'Quick' || isHybridInQuickPhase) {
+              await performSynthesis(sessionContextRef, translations);
+              return; // 快速模式处理完毕，不再执行标准模式的合成逻辑
+            }
+            
+            // 标准模式或混合模式的标准阶段：合成整个最终文本
             const translationText = Object.values(translations)[0] || '';
             const synthesisState = sessionContextRef.synthesisState;
             const lastSynthesizedText = synthesisState.lastSynthesizedText || '';
@@ -849,6 +909,12 @@ function createSession(
                       // 更新状态
                       synthesisState.lastPunctuationIndex = translationText.length - 1;
                       synthesisState.lastSynthesizedText = translationText;
+                      
+                      // 混合模式：增加句子计数
+                      if (synthesisConfig.mode === 'Hybrid') {
+                        synthesisState.sentenceCount++;
+                        console.log(`混合模式：已完成第 ${synthesisState.sentenceCount} 句`);
+                      }
                     }
                   }
                 } catch (error) {
@@ -886,6 +952,12 @@ function createSession(
                         // 更新状态
                         synthesisState.lastPunctuationIndex = translationText.length - 1;
                         synthesisState.lastSynthesizedText = translationText;
+                        
+                        // 混合模式：增加句子计数
+                        if (synthesisConfig.mode === 'Hybrid') {
+                          synthesisState.sentenceCount++;
+                          console.log(`混合模式：已完成第 ${synthesisState.sentenceCount} 句`);
+                        }
                       }
                     }
                   } catch (error) {
@@ -988,7 +1060,9 @@ function createSession(
               isProcessing: false,
               lastPunctuationIndex: -1,
               audioQueue: [],
-              isPlaying: false
+              isPlaying: false,
+              sentenceCount: 0,
+              isHybridModeActive: synthesisConfig.mode === 'Hybrid'
             },
             disposed: false
           };
@@ -1104,7 +1178,6 @@ wss.on('connection', (socket) => {
 
       const chunk = parseClientMessage(rawData);
       if (chunk instanceof Buffer) {
-        console.log('收到音频数据，长度:', chunk.length);
         const arrayBuffer = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer;
         
         session.pushStream.write(arrayBuffer);
