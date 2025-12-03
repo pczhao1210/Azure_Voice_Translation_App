@@ -240,6 +240,11 @@ interface ClientConfig {
   useAutoDetect: boolean;
   autoDetectLanguages: string[];
   segmentationStrategy: SegmentationStrategy;
+  synthesisMode?: SynthesisMode;
+}
+
+function resolveSynthesisMode(config?: ClientConfig): SynthesisMode {
+  return (config?.synthesisMode ?? synthesisConfig.mode) as SynthesisMode;
 }
 
 interface SynthesisState {
@@ -332,6 +337,7 @@ async function performQuickResponseSynthesis(
 
   const targetLanguageKey = Object.keys(translations)[0];
   const fullTranslationText = translations[targetLanguageKey];
+  const currentMode = resolveSynthesisMode(sessionContext.config);
   
   if (!fullTranslationText || fullTranslationText.trim() === '') {
     return;
@@ -415,7 +421,7 @@ async function performQuickResponseSynthesis(
         sessionContext.synthesisState.lastSynthesizedText = fullTranslationText.slice(0, newPunctuationIndex + 1);
         
         // 混合模式：检查是否遇到句子结束符号，如果是则增加句子计数
-        if (synthesisConfig.mode === 'Hybrid') {
+        if (currentMode === 'Hybrid') {
           const punctuation = fullTranslationText[newPunctuationIndex];
           const sentenceEndPunctuation = ['。', '！', '？', '.', '!', '?'];
           if (sentenceEndPunctuation.includes(punctuation)) {
@@ -527,11 +533,13 @@ async function performSynthesis(
   sessionContext: SessionContext,
   translations: Record<string, string>
 ) {
-  if (synthesisConfig.mode === 'Quick') {
+  const currentMode = resolveSynthesisMode(sessionContext.config);
+
+  if (currentMode === 'Quick') {
     await performQuickResponseSynthesis(sessionContext, translations);
-  } else if (synthesisConfig.mode === 'Standard') {
+  } else if (currentMode === 'Standard') {
     await performStandardResponseSynthesis(sessionContext, translations);
-  } else if (synthesisConfig.mode === 'Hybrid') {
+  } else if (currentMode === 'Hybrid') {
     await performHybridResponseSynthesis(sessionContext, translations);
   }
 }
@@ -811,6 +819,7 @@ function createSession(
         }
         
         const translations = mapTranslations(event.result.translations);
+        const sessionMode = resolveSynthesisMode(config);
         
         // 获取检测到的原始语言信息 - 使用安全的检测函数
         const detectedLanguage = safeDetectLanguage(event.result, useAutoDetect, autoDetectLanguages);
@@ -826,7 +835,7 @@ function createSession(
 
         // 根据合成模式决定是否在实时识别中进行合成
         if (config.enableSpeechSynthesis && sessionContextRef) {
-          if (synthesisConfig.mode === 'Quick' || synthesisConfig.mode === 'Hybrid') {
+          if (sessionMode === 'Quick' || sessionMode === 'Hybrid') {
             // 快速响应模式和混合模式：在实时识别中进行增量合成
             await performSynthesis(sessionContextRef, translations);
           }
@@ -846,6 +855,7 @@ function createSession(
           }
           
           const translations = mapTranslations(event.result.translations);
+          const sessionMode = resolveSynthesisMode(config);
           
           // 获取检测到的原始语言信息 - 使用安全的检测函数
           const detectedLanguage = safeDetectLanguage(event.result, useAutoDetect, autoDetectLanguages);
@@ -862,12 +872,12 @@ function createSession(
           // 最终识别的合成逻辑：根据合成模式决定处理方式
           if (config.enableSpeechSynthesis && sessionContextRef) {
             // 检查混合模式是否还在快速响应阶段
-            const isHybridInQuickPhase = synthesisConfig.mode === 'Hybrid' && 
+            const isHybridInQuickPhase = sessionMode === 'Hybrid' && 
                                        sessionContextRef.synthesisState.isHybridModeActive && 
                                        sessionContextRef.synthesisState.sentenceCount < synthesisConfig.hybridResponse.quickSentenceCount;
             
             // 如果是快速模式或混合模式的快速阶段，使用快速响应逻辑
-            if (synthesisConfig.mode === 'Quick' || isHybridInQuickPhase) {
+            if (sessionMode === 'Quick' || isHybridInQuickPhase) {
               await performSynthesis(sessionContextRef, translations);
               return; // 快速模式处理完毕，不再执行标准模式的合成逻辑
             }
@@ -911,7 +921,7 @@ function createSession(
                       synthesisState.lastSynthesizedText = translationText;
                       
                       // 混合模式：增加句子计数
-                      if (synthesisConfig.mode === 'Hybrid') {
+                      if (sessionMode === 'Hybrid') {
                         synthesisState.sentenceCount++;
                         console.log(`混合模式：已完成第 ${synthesisState.sentenceCount} 句`);
                       }
@@ -954,7 +964,7 @@ function createSession(
                         synthesisState.lastSynthesizedText = translationText;
                         
                         // 混合模式：增加句子计数
-                        if (synthesisConfig.mode === 'Hybrid') {
+                        if (sessionMode === 'Hybrid') {
                           synthesisState.sentenceCount++;
                           console.log(`混合模式：已完成第 ${synthesisState.sentenceCount} 句`);
                         }
@@ -1062,7 +1072,7 @@ function createSession(
               audioQueue: [],
               isPlaying: false,
               sentenceCount: 0,
-              isHybridModeActive: synthesisConfig.mode === 'Hybrid'
+              isHybridModeActive: resolveSynthesisMode(config) === 'Hybrid'
             },
             disposed: false
           };
